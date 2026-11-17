@@ -7,9 +7,15 @@ from . import backend
 
 
 def rfft_abs(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
-    """Magnitude of the real FFT along ``dim``."""
-    f = backend.rfft(x, dim=dim)
-    return torch.abs(f)
+    """Magnitude of the real FFT along ``dim``.
+
+    Computed as ``sqrt(re^2 + im^2)`` from the pair form, never via a
+    complex tensor: on devices without native complex support (Gaudi
+    without a plugin) building the complex tensor would silently
+    round-trip through the CPU.
+    """
+    re, im = backend.rfft_pair(x, dim=dim)
+    return torch.sqrt(re * re + im * im)
 
 
 def analytic_signal(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -20,6 +26,12 @@ def analytic_signal(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     (DC and Nyquist kept at unit gain for even lengths), inverse FFT.
     Uses the real-DFT matmul fallback when native FFT is unavailable.
     """
+    re, im = _analytic_pair(x, dim=dim)
+    return torch.complex(re, im)
+
+
+def _analytic_pair(x: torch.Tensor, dim: int = -1):
+    """Analytic signal as (real, imag) tensors, no complex built."""
     if torch.is_complex(x):
         raise ValueError("x must be real.")
     n = x.shape[dim]
@@ -45,7 +57,7 @@ def analytic_signal(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
         idx[dim] = slice(1, (n + 1) // 2)
         h[tuple(idx)] = 2.0
     out_re, out_im = backend.ifft_pair(re * h, im * h, dim=dim)
-    return torch.complex(out_re, out_im)
+    return out_re, out_im
 
 
 def plv(x: torch.Tensor, dim: int) -> torch.Tensor:
@@ -53,15 +65,14 @@ def plv(x: torch.Tensor, dim: int) -> torch.Tensor:
 
     Computes the analytic signal along the last axis, converts each
     sample to a unit phasor, averages phasors along ``dim`` and returns
-    the magnitude (in [0, 1]).
+    the magnitude (in [0, 1]). Pair form throughout, so it stays
+    on-device where complex tensors are unavailable.
     """
-    analytic = analytic_signal(x, dim=-1)
-    mag = torch.abs(analytic)
+    re, im = _analytic_pair(x, dim=-1)
+    mag = torch.sqrt(re * re + im * im)
     mag = torch.where(mag == 0, torch.ones_like(mag), mag)
-    unit_re = analytic.real / mag
-    unit_im = analytic.imag / mag
-    mean_re = unit_re.mean(dim=dim)
-    mean_im = unit_im.mean(dim=dim)
+    mean_re = (re / mag).mean(dim=dim)
+    mean_im = (im / mag).mean(dim=dim)
     return torch.sqrt(mean_re * mean_re + mean_im * mean_im)
 
 
@@ -89,8 +100,8 @@ def stft_log_power(
     # Framing via unfold on the last axis -> (..., n_frames, n_fft).
     frames = x.unfold(-1, n_fft, hop)
     frames = frames * window
-    spec = backend.rfft(frames, dim=-1)
-    power = spec.real * spec.real + spec.imag * spec.imag
+    re, im = backend.rfft_pair(frames, dim=-1)
+    power = re * re + im * im
     return torch.log10(power + 1e-10)
 
 

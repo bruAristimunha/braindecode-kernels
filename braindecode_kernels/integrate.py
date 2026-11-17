@@ -70,7 +70,15 @@ _STATE: dict | None = None
 
 
 def _default_probe(device) -> bool:
-    return backend.complex_fft_supported(str(torch.device(device)))
+    """FFT decision for gates: the backend's preference-aware choice.
+
+    This is deliberately not just "native FFT exists": where the
+    native FFT is a slow plugin path (Gaudi + hpu-complex), the
+    backend prefers the real-valued fallback, so gates keep the
+    library's fast real-DFT path there. See
+    ``backend.set_fft_preference``.
+    """
+    return backend.use_native_fft(device)
 
 
 def _probe_ok(probe, device) -> bool:

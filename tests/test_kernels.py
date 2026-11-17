@@ -210,3 +210,56 @@ def test_frequency_shift_vs_braindecode():
     expected, _ = bd.frequency_shift(x.clone(), y, 3.0, 100.0)
     out = frequency_shift(x, 3.0, 100.0)
     torch.testing.assert_close(out, expected.float(), rtol=1e-3, atol=1e-3)
+
+
+def test_fallback_magnitude_paths_never_build_complex(monkeypatch):
+    """On Gaudi-without-plugin torch.complex silently lands on CPU, so
+    magnitude/PLV/STFT paths must work from (re, im) pairs only."""
+    torch.manual_seed(0)
+    x = torch.randn(2, 3, 200)
+    expected_abs = torch.abs(torch.fft.rfft(x, dim=-1))
+    expected_plv = plv(x, dim=0)
+    expected_stft = stft_log_power(x[:, 0], n_fft=64, hop=32)
+    monkeypatch.setattr(backend, "complex_fft_supported", lambda d: False)
+
+    def _no_complex(*a, **k):
+        raise AssertionError("torch.complex called on the fallback path")
+
+    monkeypatch.setattr(torch, "complex", _no_complex)
+    torch.testing.assert_close(rfft_abs(x), expected_abs, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(plv(x, dim=0), expected_plv, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(
+        stft_log_power(x[:, 0], n_fft=64, hop=32), expected_stft,
+        rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize("n", [200, 1920, 6000])
+def test_dft_fallback_accuracy_long_lengths(monkeypatch, n):
+    """Phase indices reduced modulo n in integers (Braindecode's basis):
+    float32 k*n phases gave 5.2e-4 at n=6000; this must stay ~1e-6."""
+    torch.manual_seed(0)
+    x = torch.randn(4, n)
+    monkeypatch.setattr(backend, "complex_fft_supported", lambda d: False)
+    got = rfft_abs(x)
+    ref = torch.abs(torch.fft.rfft(x.double(), dim=-1)).float()
+    rel = ((got - ref).abs().max() / ref.abs().max()).item()
+    assert rel < 1e-5, f"n={n} rel err {rel}"
+
+
+def test_fft_preference_forces_fallback(monkeypatch):
+    torch.manual_seed(0)
+    x = torch.randn(2, 64)
+    expected = torch.abs(torch.fft.rfft(x, dim=-1))
+    backend.set_fft_preference("cpu", "fallback")
+    try:
+        assert backend.use_native_fft(x.device) is False
+        assert "dft-matmul" in backend.get_backend_name(x.device)
+        torch.testing.assert_close(rfft_abs(x), expected, rtol=1e-4, atol=1e-4)
+    finally:
+        backend.set_fft_preference("cpu", "auto")
+    assert backend.use_native_fft(x.device) is True
+
+
+def test_fft_preference_rejects_bad_mode():
+    with pytest.raises(ValueError):
+        backend.set_fft_preference("cpu", "sometimes")

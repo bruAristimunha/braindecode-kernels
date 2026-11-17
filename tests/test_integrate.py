@@ -183,3 +183,22 @@ def test_real_braindecode_import_order():
     finally:
         integrate.unpatch_braindecode()
     assert cbramod.spectral_input is orig
+
+
+def test_gate_default_probe_respects_fft_preference(monkeypatch):
+    """Plugin-on-Gaudi case: native FFT exists but is slower than the
+    real-DFT path, so the gate must keep needs_real_dft when the
+    backend preference says fallback for that device type."""
+    from braindecode_kernels import backend
+
+    functions, real_dft, *_ = _make_stub(monkeypatch)
+    backend.set_fft_preference("cpu", "fallback")
+    try:
+        integrate.patch_braindecode()
+        x = torch.randn(2, 8)
+        assert real_dft.needs_real_dft(x) is True  # fallback kept
+        out = functions.spectral_input(x)
+        assert (out - (x + 1000.0)).abs().max() < 1e-5  # original ran
+    finally:
+        integrate.unpatch_braindecode()
+        backend.set_fft_preference("cpu", "auto")

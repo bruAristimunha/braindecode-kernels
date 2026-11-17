@@ -99,6 +99,8 @@ libraries without such a hook.
 
 `complex_fft_supported(device)` runs a tiny cached probe — an 8-point `rfft`/`irfft` on the device inside `try/except` (materialised so lazy XLA/HPU backends actually execute it). If it succeeds, `torch.fft` is used. If it raises, every FFT in the package is computed from a cached real DFT basis: cos/sin matrices cached per `(n, device, dtype)`, applied with real matmuls on `(real, imag)` pairs — operations every backend supports. `get_backend_name(device)` reports e.g. `cuda-native-fft`, `gaudi-hpu-dft-matmul`. Moving a tensor to a new device needs no code change.
 
+Native FFT existing is not always native FFT being fast: on Gaudi, a plugin FFT can be correct but far slower than the DFT matmul at EEG shapes, so `use_native_fft(device)` — the decision every op and gate actually uses — defaults to the fallback for `hpu` even when the probe passes. Override with `set_fft_preference("hpu", "native")`. Magnitude, power and PLV are computed from `(real, imag)` pairs (`sqrt(re² + im²)`), never by building a complex tensor, so they stay on-device where `torch.complex` would silently round-trip through the CPU. The DFT basis reduces phase indices modulo `n` in integers, keeping the fallback at ~1e-6 relative error even at n=6000.
+
 ## Limits
 
 - The DFT fallback is O(n²) in time and memory per transform length; it is a correctness fallback, not a performance path, and the cached basis costs `2·n²` elements per length/device/dtype.
