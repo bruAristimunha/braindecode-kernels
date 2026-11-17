@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "braindecode-kernels"
-version = "0.2.1"
+version = "0.2.2"
 description = "Backend-portable Braindecode-oriented torch ops (CUDA, TPU/XLA, Gaudi/HPU, CPU) built from composed pure-torch operations."
 readme = "README.md"
 license = { text = "Apache-2.0" }

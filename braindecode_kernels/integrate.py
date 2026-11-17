@@ -90,11 +90,17 @@ def _probe_ok(probe, device) -> bool:
 
 
 def _wrap_input(original, probe):
+    """Input gates always keep the tensor on its device.
+
+    The spectral math that follows — native FFT or the real-valued
+    fallback — runs on-device either way, so the FFT decision must
+    not re-enable the library's CPU copy. Only predicate gates
+    consult the probe.
+    """
+
     @functools.wraps(original)
     def wrapped(x):
-        if _probe_ok(probe, x.device):
-            return x.to(torch.promote_types(x.dtype, torch.float32))
-        return original(x)
+        return x.to(torch.promote_types(x.dtype, torch.float32))
 
     return wrapped
 

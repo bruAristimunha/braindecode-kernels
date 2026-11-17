@@ -83,8 +83,10 @@ def test_patch_defers_to_original_when_fft_missing(monkeypatch):
     functions, real_dft, fake_model, orig_si, orig_nd = _make_stub(monkeypatch)
     integrate.patch_braindecode(fft_probe=lambda dev: False)
     x = torch.randn(2, 8)
+    # Input gate stays on-device (real-DFT matmuls run there); only
+    # the predicate defers to the original.
     out = functions.spectral_input(x)
-    assert (out - (x + 1000.0)).abs().max() < 1e-5  # original ran
+    assert (out - x).abs().max() < 1e-6
     assert real_dft.needs_real_dft(x) is True  # real-DFT preserved
 
 
@@ -96,9 +98,9 @@ def test_raising_probe_falls_back_to_original(monkeypatch):
 
     integrate.patch_braindecode(fft_probe=bad_probe)
     x = torch.randn(2, 8)
-    out = functions.spectral_input(x)
-    assert (out - (x + 1000.0)).abs().max() < 1e-5
-    assert real_dft.needs_real_dft(x) is True
+    out = functions.spectral_input(x)  # input gate needs no probe
+    assert (out - x).abs().max() < 1e-6
+    assert real_dft.needs_real_dft(x) is True  # predicate fell back
 
 
 def test_scan_does_not_trigger_lazy_module_getattr(monkeypatch):
@@ -198,7 +200,7 @@ def test_gate_default_probe_respects_fft_preference(monkeypatch):
         x = torch.randn(2, 8)
         assert real_dft.needs_real_dft(x) is True  # fallback kept
         out = functions.spectral_input(x)
-        assert (out - (x + 1000.0)).abs().max() < 1e-5  # original ran
+        assert (out - x).abs().max() < 1e-6  # still on-device
     finally:
         integrate.unpatch_braindecode()
         backend.set_fft_preference("cpu", "auto")
