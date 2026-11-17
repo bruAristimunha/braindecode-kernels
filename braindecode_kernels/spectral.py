@@ -92,3 +92,16 @@ def stft_log_power(
     spec = backend.rfft(frames, dim=-1)
     power = spec.real * spec.real + spec.imag * spec.imag
     return torch.log10(power + 1e-10)
+
+
+def spectrogram(x, n_fft, hop_length=None, window=None):
+    """Complex STFT spectrogram with the window on ``x``'s device.
+
+    torchaudio's transform keeps its window on CPU on some stacks,
+    which fails on accelerator tensors; this is the portable spelling
+    of the same computation via ``torch.stft``.
+    """
+    if window is None:
+        window = torch.hann_window(n_fft, device=x.device, dtype=x.dtype)
+    return torch.stft(
+        x, n_fft, hop_length=hop_length, window=window, return_complex=True)
